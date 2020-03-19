@@ -86,7 +86,7 @@ new_context() {
   read -p 'Aws Secret Access Key: ' secret_access_key
 
   tmp=$(mktemp)
-  jq ".contexts.$context = {\"secret_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx.json > "$tmp" \
+  jq ".contexts.$context = {\"access_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx.json
   echo "Created context \"${context}\"..." >&2
 }

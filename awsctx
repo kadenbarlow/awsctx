@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+#
+# awsctx is a utility to manage different aws credentials between several accounts
+#
+# Copyright 2020 Kaden Barlow.
+#
+# TODO Insert MIT License Here
+#
+
+SELF_CMD="$0"
+
+choose_context_interactive() {
+  local choice
+  choice="$(FZF_DEFAULT_COMMAND="${SELF_CMD}" fzf --ansi --no-preview || true)"
+  if [[ -z "${choice}" ]]; then
+    echo 2>&1 "error: you did not choose any of the options"
+    exit 1
+  else
+    set_context "${choice}"
+  fi
+}
+
+current_context() {
+  jq '.current_context' ~/.aws/awsctx.json -r
+}
+
+previous_context() {
+  jq '.previous_context' ~/.aws/awsctx.json -r
+}
+
+delete_contexts() {
+  for i in "${@}"; do
+    delete_context "${i}"
+  done
+}
+
+delete_context() {
+  local ctx
+  ctx="${1}"
+  if [[ "${ctx}" == "." ]]; then
+    ctx="$(current_context)" || exit_err "error getting current context"
+  fi
+  echo "Deleting context \"${ctx}\"..." >&2
+  tmp=$(mktemp)
+  jq "del(.contexts.\"${1}\")" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+}
+
+
+exit_err() {
+  echo >&2 "${1}"
+  exit 1
+}
+
+get_contexts() {
+  jq '.["contexts"]' ~/.aws/awsctx.json | jq 'keys[]' -cS | sed -e 's/"//g'
+}
+
+list_contexts() {
+  set -u pipefail
+  local cur ctx_list
+  cur="$(current_context)" || exit_err "error getting current context"
+  ctx_list=$(get_contexts) || exit_err "error getting context list"
+
+  local yellow darkbg normal
+  highlight=$(tput setaf 118 || true)
+  normal=$(tput sgr0 || true)
+
+  for c in $ctx_list; do
+    if [[ -z "${NO_COLOR:-}" ]]; then
+      # colored output mode
+      if [[ "${c}" = "${cur}" ]]; then
+        echo "${normal}${highlight}${c}${normal}"
+      else
+        echo "${c}"
+      fi
+    else
+      echo "here"
+      echo "${c}"
+    fi
+  done
+}
+
+new_context() {
+  read -p 'Context Name: ' context
+  read -p 'AWS Access Key ID: ' access_key_id
+  read -p 'Aws Secret Access Key: ' secret_access_key
+
+  tmp=$(mktemp)
+  jq ".contexts.$context = {\"secret_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx.json
+  echo "Created context \"${context}\"..." >&2
+}
+
+rename_context() {
+  local old_name="${1}"
+  local new_name="${2}"
+
+  if [[ "${old_name}" == "." || "${old_name}" = "$(current_context)" ]]; then
+    old_name="$(current_context)"
+    save_context $new_name
+  fi
+
+  tmp=$(mktemp)
+  jq ".contexts.$new_name = .contexts.$old_name | del(.contexts.$old_name)" ~/.aws/awsctx.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx.json
+}
+
+save_context() {
+  tmp=$(mktemp)
+  jq ".current_context = \"$1\"" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+}
+
+save_previous_context() {
+  tmp=$(mktemp)
+  jq ".previous_context = \"$1\"" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+}
+
+set_context() {
+  local prev
+  prev="$(current_context)" || exit_err "error getting current context"
+
+  switch_context "${1}"
+
+  if [[ "${prev}" != "${1}" ]]; then
+    save_context "${1}"
+    save_previous_context "${prev}"
+  fi
+}
+
+swap_context() {
+  local previous
+  previous="$(previous_context)"
+  set_context $previous
+}
+
+switch_context() {
+  local access_key_id secret_access_key
+  access_key_id=$(jq ".contexts.$1.access_key_id" ~/.aws/awsctx.json)
+  secret_access_key=$(jq ".contexts.$1.secret_access_key" ~/.aws/awsctx.json)
+
+  cat <<EOF > ~/.aws/credentials
+[default]
+aws_access_key_id = ${access_key_id}
+aws_secret_access_key = ${secret_access_key}
+EOF
+
+}
+
+usage() {
+  local SELF
+  SELF="awsctx"
+
+  cat <<EOF
+USAGE:
+  $SELF                       : list the contexts
+  $SELF <NAME>                : switch to context <NAME>
+  $SELF -                     : switch to the previous context
+  $SELF -c, --current         : show the current context name
+  $SELF -n, --new             : create a new aws context
+  $SELF <NEW_NAME>=<NAME>     : rename context <NAME> to <NEW_NAME>
+  $SELF <NEW_NAME>=.          : rename current_context to <NEW_NAME>
+  $SELF -d <NAME> [<NAME...>] : delete context <NAME> ('.' for current_context)
+                                  (this command won't delete the credentials in ~/.aws/credentials)
+  $SELF -h,--help             : show this message
+EOF
+}
+
+check_dependencies() {
+  dependencies=(jq)
+  for dependency in "${dependencies[@]}"; do
+    if ! command -v $dependency >/dev/null 2>&1; then
+      exit_err "please install $dependency"
+    fi
+  done
+}
+
+main() {
+  check_dependencies
+  if [ ! -f ~/.aws/awsctx.json ]; then
+    mkdir -p ~/.aws
+    echo "{}" > ~/.aws/awsctx.json
+  fi
+
+  if [[ "$#" -eq 0 ]]; then
+    if [[ -t 1 && -z "${IGNORE_FZF:-}" && "$(type fzf &>/dev/null; echo $?)" -eq 0 ]]; then
+      choose_context_interactive
+    else
+      list_contexts
+    fi
+  elif [[ "${1}" == "-d" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+      echo "error: missing context NAME" >&2
+      usage
+      exit 1
+    fi
+    delete_contexts "${@:2}"
+  elif [[ "$#" -gt 1 ]]; then
+    echo "error: too many arguments" >&2
+    usage
+    exit 1
+  elif [[ "$#" -eq 1 ]]; then
+    if [[ "${1}" == "-" ]]; then
+      swap_context
+    elif [[ "${1}" == '-c' || "${1}" == '--current' ]]; then
+      current_context
+    elif [[ "${1}" == '-n' || "${1}" == '--new' ]]; then
+      new_context
+    elif [[ "${1}" == '-h' || "${1}" == '--help' ]]; then
+      usage
+    elif [[ "${1}" =~ ^-(.*) ]]; then
+      echo "error: unrecognized flag \"${1}\"" >&2
+      usage
+      exit 1
+    elif [[ "${1}" =~ (.+)=(.+) ]]; then
+      rename_context "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
+    else
+      set_context "${1}"
+    fi
+  else
+    usage
+    exit 1
+  fi
+}
+
+main "$@"

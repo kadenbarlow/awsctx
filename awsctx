@@ -135,8 +135,8 @@ swap_context() {
 
 switch_context() {
   local access_key_id secret_access_key
-  access_key_id=$(jq ".contexts.$1.access_key_id" ~/.aws/awsctx.json)
-  secret_access_key=$(jq ".contexts.$1.secret_access_key" ~/.aws/awsctx.json)
+  access_key_id=$(jq ".contexts.$1.access_key_id" ~/.aws/awsctx.json -r )
+  secret_access_key=$(jq ".contexts.$1.secret_access_key" ~/.aws/awsctx.json -r)
 
   cat <<EOF > ~/.aws/credentials
 [default]

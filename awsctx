@@ -45,6 +45,15 @@ delete_context() {
   jq "del(.contexts.\"${1}\")" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
 }
 
+export_variables() {
+  local access_key_id secret_access_key context
+  context=$(current_context)
+  access_key_id=$(jq ".contexts.$context.access_key_id" ~/.aws/awsctx.json -r )
+  secret_access_key=$(jq ".contexts.$context.secret_access_key" ~/.aws/awsctx.json -r)
+
+  export AWS_ACCESS_KEY_ID="$access_key_id"
+  export AWS_SECRET_ACCESS_KEY="$secret_access_key"
+}
 
 exit_err() {
   echo >&2 "${1}"
@@ -156,6 +165,7 @@ USAGE:
   $SELF <NAME>                : switch to context <NAME>
   $SELF -                     : switch to the previous context
   $SELF -c, --current         : show the current context name
+  $SELF -e, --export          : export context as env, e.g. source awsctx -e
   $SELF -n, --new             : create a new aws context
   $SELF <NEW_NAME>=<NAME>     : rename context <NAME> to <NEW_NAME>
   $SELF <NEW_NAME>=.          : rename current_context to <NEW_NAME>
@@ -203,6 +213,8 @@ main() {
       swap_context
     elif [[ "${1}" == '-c' || "${1}" == '--current' ]]; then
       current_context
+    elif [[ "${1}" == '-e' || "${1}" == '--export' ]]; then
+      export_variables
     elif [[ "${1}" == '-n' || "${1}" == '--new' ]]; then
       new_context
     elif [[ "${1}" == '-h' || "${1}" == '--help' ]]; then

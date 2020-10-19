@@ -1,6 +1,6 @@
 # Awsctx
 
-I spend a lot of time doing bouncing between aws accounts and I couldn't find an easy way to manage the different access keys I had. After using kubectx I was inspired to create a similar tool but for switching between different aws accounts.
+I spend a lot of time doing bouncing between aws accounts and I couldn't find an easy way to manage the different access keys I had. After using an awesome kuberneetes tool called [kubectx](https://github.com/ahmetb/kubectx) I was inspired to create a similar tool but for switching between different aws accounts.
 
 ## Installing
 
@@ -35,7 +35,7 @@ USAGE:
 ```
 
 ## Keeping Credentials Secure
-Awsctx uses aescrypt to store credentials securely. Although the option is provided to set credentials in the ~/.aws/credentials file (using the command `awsctx -s <NAME>`) it is recommended to source the credentials in your environment to avoid storing credentials in plain text. To do this use the command `source awsctx -e` and your credentials will be set to the environment variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+Awsctx uses aescrypt to store credentials securely. Although the option is provided to set credentials in the `~/.aws/credentials` file, using the command `awsctx -s <NAME>`, it is recommended to source the credentials in your environment when needed to avoid storing credentials in plain text. To do this use the command `source awsctx -e` and your credentials will be set to the environment variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
 ## Authors
 
@@ -44,7 +44,3 @@ Awsctx uses aescrypt to store credentials securely. Although the option is provi
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
-
-## Acknowledgments
-
-* Inspiration from kubectx

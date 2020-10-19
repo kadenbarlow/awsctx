@@ -9,6 +9,7 @@ I spend a lot of time doing bouncing between aws accounts and I couldn't find an
 2. [aescrypt](https://www.aescrypt.com/)
 3. [fzf](https://github.com/junegunn/fzf) - optional for fuzzy search menus
 
+### Installing Awsctx
 ```bash
 git clone https://github.com/kadenbarlow/awsctx.git
 cd awsctx

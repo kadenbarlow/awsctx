@@ -202,8 +202,21 @@ rename_context() {
   fi
 
   tmp=$(mktemp)
-  jq ".contexts.$new_name = .contexts.$old_name | del(.contexts.$old_name)" ~/.aws/awsctx.json > "$tmp" \
+  decrypt_data
+
+  jq ".contexts = .contexts - [\"$old_name\"]" ~/.aws/awsctx.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx.json
+
+  jq ".contexts = .contexts + [\"$new_name\"]" ~/.aws/awsctx.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx.json
+
+  jq ".$new_name = .$old_name" ~/.aws/awsctx-encrypted.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx-encrypted.json
+
+  jq "del(.$old_name)" ~/.aws/awsctx-encrypted.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx-encrypted.json
+
+  encrypt_data
 }
 
 save_context() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# awsctx is a utility to manage different aws credentials between several accounts
+# awsctx is a utility to manage different aws credentials between several accounts securely
 #
 # Copyright 2020 Kaden Barlow.
 #
@@ -28,6 +28,37 @@
 #
 
 SELF_CMD="$0"
+AESCRYPT_PASS=""
+
+change_password() {
+  decrypt_data
+  printf "Enter New Password: "
+  read -s AESCRYPT_PASS
+  echo ""
+  encrypt_data
+}
+
+check_awsctx_json_files() {
+  mkdir -p ~/.aws
+  if [ ! -f ~/.aws/awsctx.json ]; then
+    echo "{\"contexts\": []}" > ~/.aws/awsctx.json
+  fi
+
+  if [ ! -f ~/.aws/awsctx-encrypted.json.aes ]; then
+    echo "{}" > ~/.aws/awsctx-encrypted.json
+    echo "Creating a new encrypted file to store aws credentials... You will be prompted to create a password."
+    encrypt_data
+  fi
+}
+
+check_dependencies() {
+  dependencies=(jq aescrypt)
+  for dependency in "${dependencies[@]}"; do
+    if ! command -v $dependency >/dev/null 2>&1; then
+      exit_err "please install $dependency"
+    fi
+  done
+}
 
 choose_context_interactive() {
   local choice
@@ -36,7 +67,11 @@ choose_context_interactive() {
     echo 2>&1 "error: you did not choose any of the options"
     exit 1
   else
-    set_context "${choice}"
+    if [[ "$1" == "-s" ]]; then
+      set_context "${choice}"
+    else
+      export_variables "${choice}"
+    fi
   fi
 }
 
@@ -44,14 +79,12 @@ current_context() {
   jq '.current_context' ~/.aws/awsctx.json -r
 }
 
-previous_context() {
-  jq '.previous_context' ~/.aws/awsctx.json -r
-}
-
-delete_contexts() {
-  for i in "${@}"; do
-    delete_context "${i}"
-  done
+decrypt_data() {
+  get_password
+  aescrypt -d -p $AESCRYPT_PASS ~/.aws/awsctx-encrypted.json.aes
+  if [ $? -ne 0 ]; then
+    exit 1
+  fi
 }
 
 delete_context() {
@@ -62,17 +95,23 @@ delete_context() {
   fi
   echo "Deleting context \"${ctx}\"..." >&2
   tmp=$(mktemp)
-  jq "del(.contexts.\"${1}\")" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+  jq ".contexts = .contexts - [\"${ctx}\"]" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+
+  decrypt_data
+  jq "del(.\"${ctx}\")" ~/.aws/awsctx-encrypted.json > "$tmp" && mv "$tmp" ~/.aws/awsctx-encrypted.json
+  encrypt_data
 }
 
-export_variables() {
-  local access_key_id secret_access_key context
-  context=$(current_context)
-  access_key_id=$(jq ".contexts.$context.access_key_id" ~/.aws/awsctx.json -r )
-  secret_access_key=$(jq ".contexts.$context.secret_access_key" ~/.aws/awsctx.json -r)
+delete_contexts() {
+  for i in "${@}"; do
+    delete_context "${i}"
+  done
+}
 
-  export AWS_ACCESS_KEY_ID="$access_key_id"
-  export AWS_SECRET_ACCESS_KEY="$secret_access_key"
+encrypt_data() {
+  get_password
+  aescrypt -e -p $AESCRYPT_PASS ~/.aws/awsctx-encrypted.json
+  rm ~/.aws/awsctx-encrypted.json
 }
 
 exit_err() {
@@ -80,8 +119,32 @@ exit_err() {
   exit 1
 }
 
+export_variables() {
+  local access_key_id secret_access_key context
+  local context="$1"
+  if [ -z $context ]; then
+    context=$(current_context)
+  fi
+
+  decrypt_data
+  access_key_id=$(jq ".$context.access_key_id" ~/.aws/awsctx-encrypted.json -r )
+  secret_access_key=$(jq ".$context.secret_access_key" ~/.aws/awsctx-encrypted.json -r)
+  encrypt_data
+
+  export AWS_ACCESS_KEY_ID="$access_key_id"
+  export AWS_SECRET_ACCESS_KEY="$secret_access_key"
+}
+
 get_contexts() {
-  jq '.["contexts"]' ~/.aws/awsctx.json | jq 'keys[]' -cS | sed -e 's/"//g'
+  jq '.contexts[]' ~/.aws/awsctx.json | sed -e 's/"//g'
+}
+
+get_password() {
+  if [ -z $AESCRYPT_PASS ]; then
+    printf "Awsctx Encryption Password: "
+    read -s AESCRYPT_PASS
+    echo ""
+  fi
 }
 
 list_contexts() {
@@ -114,10 +177,19 @@ new_context() {
   read -p 'AWS Access Key ID: ' access_key_id
   read -p 'Aws Secret Access Key: ' secret_access_key
 
+  decrypt_data
+
   tmp=$(mktemp)
-  jq ".contexts.$context = {\"access_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx.json > "$tmp" \
-    && mv "$tmp" ~/.aws/awsctx.json
+  jq ".contexts = .contexts + [\"$context\"]" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+  jq ".$context = {\"access_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx-encrypted.json > "$tmp" \
+    && mv "$tmp" ~/.aws/awsctx-encrypted.json
+
+  encrypt_data
   echo "Created context \"${context}\"..." >&2
+}
+
+previous_context() {
+  jq '.previous_context' ~/.aws/awsctx.json -r
 }
 
 rename_context() {
@@ -164,8 +236,10 @@ swap_context() {
 
 switch_context() {
   local access_key_id secret_access_key
-  access_key_id=$(jq ".contexts.$1.access_key_id" ~/.aws/awsctx.json -r )
-  secret_access_key=$(jq ".contexts.$1.secret_access_key" ~/.aws/awsctx.json -r)
+  decrypt_data
+  access_key_id=$(jq ".$1.access_key_id" ~/.aws/awsctx-encrypted.json -r )
+  secret_access_key=$(jq ".$1.secret_access_key" ~/.aws/awsctx-encrypted.json -r)
+  encrypt_data
 
   cat <<EOF > ~/.aws/credentials
 [default]
@@ -184,9 +258,11 @@ USAGE:
   $SELF                       : list the contexts
   $SELF <NAME>                : switch to context <NAME>
   $SELF -                     : switch to the previous context
+  $SELF -e, --export <NAME>   : export context as env, e.g. source awsctx -e <name>
   $SELF -c, --current         : show the current context name
-  $SELF -e, --export          : export context as env, e.g. source awsctx -e
+  $SELF -s, --set <NAME>      : fill ~/.aws/credentials with context variables
   $SELF -n, --new             : create a new aws context
+  $SELF -p, --password        : change encryption password
   $SELF <NEW_NAME>=<NAME>     : rename context <NAME> to <NEW_NAME>
   $SELF <NEW_NAME>=.          : rename current_context to <NEW_NAME>
   $SELF -d <NAME> [<NAME...>] : delete context <NAME> ('.' for current_context)
@@ -195,28 +271,12 @@ USAGE:
 EOF
 }
 
-check_dependencies() {
-  dependencies=(jq)
-  for dependency in "${dependencies[@]}"; do
-    if ! command -v $dependency >/dev/null 2>&1; then
-      exit_err "please install $dependency"
-    fi
-  done
-}
-
 main() {
   check_dependencies
-  if [ ! -f ~/.aws/awsctx.json ]; then
-    mkdir -p ~/.aws
-    echo "{}" > ~/.aws/awsctx.json
-  fi
+  check_awsctx_json_files
 
   if [[ "$#" -eq 0 ]]; then
-    if [[ -t 1 && -z "${IGNORE_FZF:-}" && "$(type fzf &>/dev/null; echo $?)" -eq 0 ]]; then
-      choose_context_interactive
-    else
-      list_contexts
-    fi
+    list_contexts
   elif [[ "${1}" == "-d" ]]; then
     if [[ "$#" -lt 2 ]]; then
       echo "error: missing context NAME" >&2
@@ -224,6 +284,28 @@ main() {
       exit 1
     fi
     delete_contexts "${@:2}"
+  elif [[ "${1}" == "-e" ]] || [[ "${1}" == "--export" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+      if [[ -t 1 && -z "${IGNORE_FZF:-}" && "$(type fzf &>/dev/null; echo $?)" -eq 0 ]]; then
+        choose_context_interactive "$1"
+      else
+        usage
+        exit 1
+      fi
+    else
+      export_variables "$2"
+    fi
+  elif [[ "${1}" == "-s" ]] || [[ "${1}" == "--set" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+      if [[ -t 1 && -z "${IGNORE_FZF:-}" && "$(type fzf &>/dev/null; echo $?)" -eq 0 ]]; then
+        choose_context_interactive "$1"
+      else
+        usage
+        exit 1
+      fi
+    else
+      set_context "$2"
+    fi
   elif [[ "$#" -gt 1 ]]; then
     echo "error: too many arguments" >&2
     usage
@@ -233,10 +315,10 @@ main() {
       swap_context
     elif [[ "${1}" == '-c' || "${1}" == '--current' ]]; then
       current_context
-    elif [[ "${1}" == '-e' || "${1}" == '--export' ]]; then
-      export_variables
     elif [[ "${1}" == '-n' || "${1}" == '--new' ]]; then
       new_context
+    elif [[ "${1}" == '-p' || "${1}" == '--password' ]]; then
+      change_password
     elif [[ "${1}" == '-h' || "${1}" == '--help' ]]; then
       usage
     elif [[ "${1}" =~ ^-(.*) ]]; then

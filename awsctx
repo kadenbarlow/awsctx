@@ -81,7 +81,7 @@ current_context() {
 
 decrypt_data() {
   get_password
-  aescrypt -d -p $AESCRYPT_PASS ~/.aws/awsctx-encrypted.json.aes
+  aescrypt -d -p "$AESCRYPT_PASS" ~/.aws/awsctx-encrypted.json.aes
   if [ $? -ne 0 ]; then
     exit 1
   fi
@@ -110,7 +110,7 @@ delete_contexts() {
 
 encrypt_data() {
   get_password
-  aescrypt -e -p $AESCRYPT_PASS ~/.aws/awsctx-encrypted.json
+  aescrypt -e -p "$AESCRYPT_PASS" ~/.aws/awsctx-encrypted.json
   rm ~/.aws/awsctx-encrypted.json
 }
 
@@ -140,7 +140,7 @@ get_contexts() {
 }
 
 get_password() {
-  if [ -z $AESCRYPT_PASS ]; then
+  if [ -z "$AESCRYPT_PASS" ]; then
     printf "Awsctx Encryption Password: "
     read -s AESCRYPT_PASS
     echo ""

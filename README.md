@@ -7,6 +7,7 @@ I spend a lot of time doing bouncing between aws accounts and I couldn't find an
 ### Prerequisites
 1. [jq](https://stedolan.github.io/jq/)
 2. [aescrypt](https://www.aescrypt.com/)
+   1. Note, if on MacOS do *not* use `brew install aescrypt`, instead download from the link above
 3. [fzf](https://github.com/junegunn/fzf) - optional for fuzzy search menus
 
 ### Installing Awsctx

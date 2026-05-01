@@ -80,11 +80,22 @@ current_context() {
 }
 
 decrypt_data() {
-  get_password
-  aescrypt -d -p "$AESCRYPT_PASS" ~/.aws/awsctx-encrypted.json.aes
-  if [ $? -ne 0 ]; then
-    exit 1
-  fi
+  local attempts=0
+
+  while true; do
+    get_password
+    if aescrypt -d -p "$AESCRYPT_PASS" ~/.aws/awsctx-encrypted.json.aes; then
+      return 0
+    fi
+
+    attempts=$((attempts + 1))
+    if [[ "$attempts" -ge 2 ]]; then
+      exit 1
+    fi
+
+    AESCRYPT_PASS=""
+    echo "error: invalid password, please try again" >&2
+  done
 }
 
 delete_context() {
@@ -95,10 +106,10 @@ delete_context() {
   fi
   echo "Deleting context \"${ctx}\"..." >&2
   tmp=$(mktemp)
-  jq ".contexts = .contexts - [\"${ctx}\"]" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+  jq --arg ctx "$ctx" '.contexts = (.contexts - [$ctx])' ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
 
   decrypt_data
-  jq "del(.\"${ctx}\")" ~/.aws/awsctx-encrypted.json > "$tmp" && mv "$tmp" ~/.aws/awsctx-encrypted.json
+  jq --arg ctx "$ctx" 'del(.[$ctx])' ~/.aws/awsctx-encrypted.json > "$tmp" && mv "$tmp" ~/.aws/awsctx-encrypted.json
   encrypt_data
 }
 
@@ -122,13 +133,13 @@ exit_err() {
 export_variables() {
   local access_key_id secret_access_key context
   local context="$1"
-  if [ -z $context ]; then
+  if [ -z "$context" ]; then
     context=$(current_context)
   fi
 
   decrypt_data
-  access_key_id=$(jq ".$context.access_key_id" ~/.aws/awsctx-encrypted.json -r )
-  secret_access_key=$(jq ".$context.secret_access_key" ~/.aws/awsctx-encrypted.json -r)
+  access_key_id=$(jq --arg context "$context" -r '.[$context].access_key_id' ~/.aws/awsctx-encrypted.json)
+  secret_access_key=$(jq --arg context "$context" -r '.[$context].secret_access_key' ~/.aws/awsctx-encrypted.json)
   encrypt_data
 
   export AWS_ACCESS_KEY_ID="$access_key_id"
@@ -173,16 +184,31 @@ list_contexts() {
 }
 
 new_context() {
+  local context access_key_id secret_access_key tmp_json tmp_encrypted
+
   read -p 'Context Name: ' context
   read -p 'AWS Access Key ID: ' access_key_id
   read -p 'Aws Secret Access Key: ' secret_access_key
 
   decrypt_data
 
-  tmp=$(mktemp)
-  jq ".contexts = .contexts + [\"$context\"]" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
-  jq ".$context = {\"access_key_id\": \"$access_key_id\", \"secret_access_key\": \"$secret_access_key\"}" ~/.aws/awsctx-encrypted.json > "$tmp" \
-    && mv "$tmp" ~/.aws/awsctx-encrypted.json
+  tmp_json=$(mktemp)
+  tmp_encrypted=$(mktemp)
+
+  if ! jq --arg context "$context" '.contexts = .contexts + [$context]' ~/.aws/awsctx.json > "$tmp_json"; then
+    rm -f "$tmp_json" "$tmp_encrypted"
+    encrypt_data
+    exit_err "error creating context \"${context}\""
+  fi
+
+  if ! jq --arg context "$context" --arg access_key_id "$access_key_id" --arg secret_access_key "$secret_access_key" '.[$context] = {"access_key_id": $access_key_id, "secret_access_key": $secret_access_key}' ~/.aws/awsctx-encrypted.json > "$tmp_encrypted"; then
+    rm -f "$tmp_json" "$tmp_encrypted"
+    encrypt_data
+    exit_err "error creating context \"${context}\""
+  fi
+
+  mv "$tmp_json" ~/.aws/awsctx.json
+  mv "$tmp_encrypted" ~/.aws/awsctx-encrypted.json
 
   encrypt_data
   echo "Created context \"${context}\"..." >&2
@@ -198,22 +224,22 @@ rename_context() {
 
   if [[ "${old_name}" == "." || "${old_name}" = "$(current_context)" ]]; then
     old_name="$(current_context)"
-    save_context $new_name
+    save_context "$new_name"
   fi
 
   tmp=$(mktemp)
   decrypt_data
 
-  jq ".contexts = .contexts - [\"$old_name\"]" ~/.aws/awsctx.json > "$tmp" \
+  jq --arg old_name "$old_name" '.contexts = (.contexts - [$old_name])' ~/.aws/awsctx.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx.json
 
-  jq ".contexts = .contexts + [\"$new_name\"]" ~/.aws/awsctx.json > "$tmp" \
+  jq --arg new_name "$new_name" '.contexts = .contexts + [$new_name]' ~/.aws/awsctx.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx.json
 
-  jq ".$new_name = .$old_name" ~/.aws/awsctx-encrypted.json > "$tmp" \
+  jq --arg old_name "$old_name" --arg new_name "$new_name" '.[$new_name] = .[$old_name]' ~/.aws/awsctx-encrypted.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx-encrypted.json
 
-  jq "del(.$old_name)" ~/.aws/awsctx-encrypted.json > "$tmp" \
+  jq --arg old_name "$old_name" 'del(.[$old_name])' ~/.aws/awsctx-encrypted.json > "$tmp" \
     && mv "$tmp" ~/.aws/awsctx-encrypted.json
 
   encrypt_data
@@ -221,12 +247,12 @@ rename_context() {
 
 save_context() {
   tmp=$(mktemp)
-  jq ".current_context = \"$1\"" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+  jq --arg context "$1" '.current_context = $context' ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
 }
 
 save_previous_context() {
   tmp=$(mktemp)
-  jq ".previous_context = \"$1\"" ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
+  jq --arg context "$1" '.previous_context = $context' ~/.aws/awsctx.json > "$tmp" && mv "$tmp" ~/.aws/awsctx.json
 }
 
 set_context() {
@@ -248,10 +274,12 @@ swap_context() {
 }
 
 switch_context() {
-  local access_key_id secret_access_key
+  local access_key_id secret_access_key context
+  context="$1"
+
   decrypt_data
-  access_key_id=$(jq ".$1.access_key_id" ~/.aws/awsctx-encrypted.json -r )
-  secret_access_key=$(jq ".$1.secret_access_key" ~/.aws/awsctx-encrypted.json -r)
+  access_key_id=$(jq --arg context "$context" -r '.[$context].access_key_id' ~/.aws/awsctx-encrypted.json)
+  secret_access_key=$(jq --arg context "$context" -r '.[$context].secret_access_key' ~/.aws/awsctx-encrypted.json)
   encrypt_data
 
   cat <<EOF > ~/.aws/credentials

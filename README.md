@@ -12,9 +12,7 @@ I spend a lot of time doing bouncing between aws accounts and I couldn't find an
 
 ### Installing Awsctx
 ```bash
-git clone https://github.com/kadenbarlow/awsctx.git
-cd awsctx
-cp awsctx /usr/local/bin/awsctx
+brew install kadenbarlow/tap/awsctx
 ```
 
 ## Usage
